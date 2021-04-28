@@ -2,7 +2,7 @@ import Assignment from '../models/Assignment';
 import Order from '../models/Order';
 import OrderItem from '../models/OrderItem';
 import Pharmacy from '../models/Pharmacy';
-import collectAssignmentsForOrderItem from './collectAssignmentsForOrderItem';
+import estimatePharmacyOrderItemCost from './estimatePharmacyOrderItemCost';
 
 /**
  * Limitations: throws errors when order is not fulfillable
@@ -17,25 +17,35 @@ export default function assignOrderToPharmacies(
   const { items: orderItems } = order;
 
   // as a method of adding data to an object without modifying it
-  // keys here are pharmacies
-  // values will be the items
-  const pharmacyItemMap = new WeakMap();
-  pharmacies.forEach((pharmacy) => {
+  // keys: pharmacies
+  // values: order items fulfilled by that pharmacy
+  const pharmacyItemMap = new WeakMap<Pharmacy, OrderItem[]>();
+  pharmacies.forEach((pharmacy: Pharmacy) => {
     pharmacyItemMap.set(pharmacy, []);
   });
 
-  orderItems.forEach((workingOrderItem: OrderItem) => {
-    const workingOrderItemAssignments: Assignment[] = collectAssignmentsForOrderItem(
-      workingOrderItem,
-      pharmacies
-    );
-    // for every assignment result (atm each has 1 item) add that item to the map of pharmacies to items
-    // assignments are just a useful construct for passing this data, these are kinda "partial assignments"
-    workingOrderItemAssignments.forEach((assignment: Assignment) => {
-      const { pharmacy, items } = assignment;
-      const currentItems = pharmacyItemMap.get(pharmacy);
-      pharmacyItemMap.set(pharmacy, [...currentItems, ...items]);
-    });
+  orderItems.forEach((orderItem: OrderItem) => {
+    const pharmaciesThatCanFulfill = pharmacies
+      .map((pharmacy: Pharmacy) => {
+        const { cost, quantity } = estimatePharmacyOrderItemCost(
+          pharmacy,
+          orderItem
+        );
+        return { cost, quantity, pharmacy };
+      })
+      .filter(({ quantity }) => quantity >= orderItem.quantity)
+      .sort((a, b) => a.cost - b.cost);
+
+      if (pharmaciesThatCanFulfill.length < 1) {
+        throw new Error(`cannot fulfill order item for drug ${orderItem.drug}, no pharmacy with sufficient quantity`);
+      }
+
+      // the pharmacy that can fulfill with the lowest price
+      const { pharmacy } = pharmaciesThatCanFulfill[0];
+      // the order items it is currently fulfilling
+      const pharmacyItems = pharmacyItemMap.get(pharmacy);
+      // add in this item as well
+      pharmacyItemMap.set(pharmacy, [...pharmacyItems, orderItem]);
   });
 
   // turn our weakmap into an array of assignments
@@ -44,3 +54,4 @@ export default function assignOrderToPharmacies(
     return new Assignment(items, pharmacy);
   });
 }
+
